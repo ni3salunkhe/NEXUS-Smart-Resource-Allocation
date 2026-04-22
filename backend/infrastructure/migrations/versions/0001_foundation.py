@@ -20,16 +20,6 @@ def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
     op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
 
-    # ── user_role enum ────────────────────────────────────────
-    op.execute("""
-        DO $$ BEGIN
-            CREATE TYPE user_role AS ENUM (
-                'field_worker','coordinator','ngo_admin',
-                'funder_readonly','platform_admin'
-            );
-        EXCEPTION WHEN duplicate_object THEN NULL;
-        END $$;
-    """)
 
     # ── tenants ───────────────────────────────────────────────
     op.create_table(

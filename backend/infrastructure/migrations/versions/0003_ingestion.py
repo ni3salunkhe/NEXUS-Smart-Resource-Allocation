@@ -15,33 +15,6 @@ depends_on = None
 
 def upgrade() -> None:
 
-    # ── ENUMS ─────────────────────────────────────────────────
-    for name, values in [
-        ("source_type_enum", [
-            "paper","whatsapp","mobile","sms","csv","webhook","audio"
-        ]),
-        ("need_category_enum", [
-            "food","health","shelter","education","livelihood",
-            "water","mental_health","legal","hygiene","other"
-        ]),
-        ("need_status_enum", [
-            "unverified","verified","assigned",
-            "in_progress","resolved","closed","duplicate"
-        ]),
-        ("review_status_enum", [
-            "pending","approved","rejected","needs_info"
-        ]),
-        ("ingestion_status_enum", [
-            "received","processing","processed","failed","duplicate"
-        ]),
-    ]:
-        vals = ", ".join(f"'{v}'" for v in values)
-        op.execute(f"""
-            DO $$ BEGIN
-                CREATE TYPE {name} AS ENUM ({vals});
-            EXCEPTION WHEN duplicate_object THEN NULL;
-            END $$;
-        """)
 
     # ── TABLE: ingestion_raw ──────────────────────────────────
     # Staging table; one row per raw input before processing
@@ -53,7 +26,7 @@ def upgrade() -> None:
                   sa.ForeignKey("tenants.tenant_id"), nullable=False),
         sa.Column("source_type",      sa.Enum(*["paper","whatsapp","mobile","sms",
                                                  "csv","webhook","audio"],
-                                               name="source_type_enum"), nullable=False),
+                                               name="source_type_enum", create_type=False), nullable=False),
         sa.Column("s3_key",           sa.Text, nullable=True),        # raw artifact pointer
         sa.Column("raw_text",         sa.Text, nullable=True),        # for text channels
         sa.Column("raw_metadata",     postgresql.JSONB, server_default="{}"),
@@ -95,7 +68,7 @@ def upgrade() -> None:
                   nullable=True),
         sa.Column("source_type",          sa.Enum(*["paper","whatsapp","mobile","sms",
                                                      "csv","webhook","audio"],
-                                                   name="source_type_enum"), nullable=False),
+                                                   name="source_type_enum", create_type=False), nullable=False),
         sa.Column("s3_raw_ref",           sa.Text, nullable=True),
         sa.Column("reported_by",          postgresql.UUID(as_uuid=True),
                   sa.ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True),
@@ -227,6 +200,7 @@ def upgrade() -> None:
                     postgresql_where=sa.text("status = 'pending'"))
     op.create_index("idx_geocache_input",  "geocoding_cache", ["input_text"])
     op.create_index("idx_ingestion_status","ingestion_raw",   ["tenant_id","status"])
+    op.create_index("idx_ingestion_correlation", "ingestion_raw", ["tenant_id", "correlation_id"], unique=True)
 
 
 def downgrade() -> None:

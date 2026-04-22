@@ -44,7 +44,7 @@ class HouseholdRegistryService:
                     (household_id, tenant_id, event_type, event_payload,
                      triggered_by, related_need_id, related_task_id)
                 VALUES
-                    (:hh_id, :tid, :etype, :payload::jsonb,
+                    (:hh_id, :tid, :etype, CAST(:payload AS JSONB),
                      :by, :need_id, :task_id)
             """),
             {
@@ -112,7 +112,7 @@ class HouseholdRegistryService:
                          is_primary_contact, vulnerability_flags, added_by)
                     VALUES
                         (:hh_id, :role, :age, :gender, :primary,
-                         :vuln::jsonb, :by)
+                         CAST(:vuln AS JSONB), :by)
                 """),
                 {
                     "hh_id":   hh_id,
@@ -334,7 +334,7 @@ class HouseholdRegistryService:
                     collection_method, language_used, primary_contact_ref, collected_by
                 )
                 VALUES (
-                    :hh_id, :ctype, :scope::jsonb, :expires,
+                    :hh_id, :ctype, CAST(:scope AS JSONB), :expires,
                     :method, :lang, :contact, :by
                 )
                 RETURNING consent_id, granted_at

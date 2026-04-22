@@ -16,32 +16,6 @@ depends_on = None
 
 def upgrade() -> None:
 
-    # ── ENUMS ─────────────────────────────────────────────────
-    for name, values in [
-        ("dwelling_type_enum",   ["permanent","semi_permanent","temporary","open_space"]),
-        ("economic_tier_enum",   ["below_poverty","marginal","low","medium"]),
-        ("household_status_enum",["active","relocated","dissolved","merged_away","opted_out"]),
-        ("member_role_enum",     ["head","spouse","child","parent","dependent","other"]),
-        ("age_bracket_enum",     ["infant","child","youth","adult","elderly"]),
-        ("gender_enum",          ["male","female","non_binary","prefer_not_to_say"]),
-        ("consent_type_enum",    ["data_collection","location_sharing",
-                                  "cross_org_linking","analytics","photo"]),
-        ("consent_method_enum",  ["verbal_witnessed","signed_form","digital_app"]),
-        ("link_method_enum",     ["auto_matched","coordinator_confirmed","household_confirmed"]),
-        ("link_status_enum",     ["proposed","active","rejected","revoked"]),
-        ("hh_event_type_enum",   [
-            "need_reported","need_resolved","task_dispatched","task_completed",
-            "member_added","member_removed","vulnerability_updated","consent_changed",
-            "assistance_received","location_updated","merged","linked","opted_out",
-        ]),
-    ]:
-        vals = ", ".join(f"'{v}'" for v in values)
-        op.execute(f"""
-            DO $$ BEGIN
-                CREATE TYPE {name} AS ENUM ({vals});
-            EXCEPTION WHEN duplicate_object THEN NULL;
-            END $$;
-        """)
 
     # ── TABLE: households ─────────────────────────────────────
     op.create_table(

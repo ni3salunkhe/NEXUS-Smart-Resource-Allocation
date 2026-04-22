@@ -14,6 +14,7 @@ Sequence for each raw input:
 import json
 import logging
 import uuid
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -27,6 +28,8 @@ from .processors.deduplication import (
     check_duplicate, route_to_review_queue,
     should_route_to_review, compute_review_priority,
 )
+from shared.kafka import NexusProducer, NexusEvent
+from shared.config import KafkaTopics
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +78,38 @@ class IngestionPipeline:
         db: AsyncSession,
     ) -> PipelineResult:
         raw_id = None
+        start_time = time.perf_counter()
         try:
-            raw_id = await self._save_raw(db, payload)
-            return await self._process(db, payload, raw_id)
+            # Stage 0: persist raw record with savepoint to allow recovery on conflict
+            async with db.begin_nested():
+                raw_id = await self._save_raw(db, payload)
+            
+            result = await self._process(db, payload, raw_id)
+            latency = (time.perf_counter() - start_time) * 1000
+            logger.info(f"Pipeline SUCCESS need_id={result.need_id} latency={latency:.2f}ms")
+            return result
         except Exception as e:
+            # Handle duplicate correlation_id (Idempotency)
+            if "idx_ingestion_correlation" in str(e):
+                logger.info(f"Duplicate correlation_id detected: {payload.correlation_id}")
+                # We can now query the original db session because we used a savepoint
+                res = await db.execute(
+                    text("SELECT need_id FROM need_records WHERE raw_id = (SELECT raw_id FROM ingestion_raw WHERE correlation_id = :corr AND tenant_id = :tid)"),
+                    {"corr": payload.correlation_id, "tid": payload.tenant_id}
+                )
+                row = res.fetchone()
+                
+                if row:
+                    latency = (time.perf_counter() - start_time) * 1000
+                    logger.info(f"Pipeline IDEMPOTENT need_id={row.need_id} latency={latency:.2f}ms")
+                    return PipelineResult(
+                        success=True, need_id=str(row.need_id), raw_id=None,
+                        household_id=None, household_status=None,
+                        is_duplicate=True, duplicate_of=str(row.need_id),
+                        routed_to_review=False, review_id=None,
+                        nlp_confidence=1.0, error=None
+                    )
+
             logger.error(f"Pipeline error raw_id={raw_id}: {e}", exc_info=True)
             if raw_id:
                 await db.execute(
@@ -243,6 +274,30 @@ class IngestionPipeline:
             }
         )
         need_id = str(need_result.fetchone().need_id)
+
+        # ── Step 6: Emit Kafka Event ──────────────────────────
+        try:
+            await NexusProducer.get().emit(
+                KafkaTopics.NEED_INGESTED,
+                NexusEvent(
+                    event_type=KafkaTopics.NEED_INGESTED,
+                    payload={
+                        "need_id":      need_id,
+                        "tenant_id":    payload.tenant_id,
+                        "household_id": household_id,
+                        "category":     nlp.category,
+                        "ward_id":      geo.ward_id,
+                        "severity":     nlp.severity_score,
+                        "status":       need_status,
+                    },
+                    tenant_id=payload.tenant_id,
+                    user_id=payload.submitted_by,
+                    correlation_id=payload.correlation_id,
+                ),
+                key=need_id
+            )
+        except Exception as ke:
+            logger.warning(f"Kafka emit failed (non-fatal): {ke}")
 
         # ── Step 6: Update raw record ─────────────────────────
         await db.execute(

@@ -116,6 +116,7 @@ class KafkaTopics:
 
     # Needs
     NEED_CREATED                = "need.created"
+    NEED_INGESTED               = "need.ingested"
     NEED_VERIFIED               = "need.verified"
     NEED_URGENCY_UPDATED        = "need.urgency.updated"
     NEED_STATUS_CHANGED         = "need.status.changed"
