@@ -22,6 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
+VULNERABILITY_FLAGS = ["elderly_head", "disabled_members", "infants", "has_child", "pregnant_woman"]
+
 # â”€â”€ Default weight configuration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @dataclass
 class UrgencyWeights:
@@ -31,7 +33,10 @@ class UrgencyWeights:
     w4_unmet_duration:     float = 0.15
     w5_source_reliability: float = 0.10
     w6_crisis_frequency:   float = 0.10
-    w7_resource_coverage:  float = 0.05
+    w7_coverage_penalty:   float = 0.05
+    
+    # Category boosts (JSONB: {food: 1.2, health: 1.5, ...})
+    category_boosts:       dict  = field(default_factory=dict)
     
     # Thresholds
     chronic_threshold:     float = 3.0   # > 3 crises in 30d
@@ -72,10 +77,13 @@ def calculate_urgency_score(
     # 2. Recency (0.15)
     # Logarithmic decay: 1.0 at 0m, 0.5 at 4h, 0.1 at 24h
     now = datetime.now(timezone.utc)
-    if reported_at.tzinfo is None:
-        reported_at = reported_at.replace(tzinfo=timezone.utc)
-    age_hours = (now - reported_at).total_seconds() / 3600.0
-    r_term = (1.0 / (1.0 + math.log1p(age_hours * 2))) * w.w2_recency
+    if reported_at is None:
+        r_term = 1.0 * w.w2_recency
+    else:
+        if reported_at.tzinfo is None:
+            reported_at = reported_at.replace(tzinfo=timezone.utc)
+        age_hours = (now - reported_at).total_seconds() / 3600.0
+        r_term = (1.0 / (1.0 + math.log1p(age_hours * 2))) * w.w2_recency
 
     # 3. Vulnerability (0.20)
     # Composite of explicit score + multiplier from flags
@@ -87,10 +95,13 @@ def calculate_urgency_score(
 
     # 4. Unmet Duration (0.15)
     # Escalates if status is still 'unverified' or 'verified' (unassigned)
-    if ingested_at.tzinfo is None:
-        ingested_at = ingested_at.replace(tzinfo=timezone.utc)
-    wait_hours = (now - ingested_at).total_seconds() / 3600.0
-    u_term = min(1.0, (wait_hours / 48.0)) * w.w4_unmet_duration
+    if ingested_at is None:
+        u_term = 1.0 * w.w4_unmet_duration
+    else:
+        if ingested_at.tzinfo is None:
+            ingested_at = ingested_at.replace(tzinfo=timezone.utc)
+        wait_hours = (now - ingested_at).total_seconds() / 3600.0
+        u_term = min(1.0, (wait_hours / 48.0)) * w.w4_unmet_duration
 
     # 5. Source Reliability (0.10)
     src_map = {"field_worker": 1.0, "mobile": 0.8, "whatsapp": 0.6, "sms": 0.4, "paper": 0.3}
