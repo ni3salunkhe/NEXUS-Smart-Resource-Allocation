@@ -1,0 +1,15 @@
+{
+  "category": "health",
+  "description": "Family of four needs emergency medical supplies. One child has a high fever.",
+  "location_text": "South Ward, Building 4B",
+  "latitude": 19.0760,
+  "longitude": 72.8777,
+  "beneficiary_count": 4,
+  "language": "en",
+  "vulnerability_flags": {
+    "has_child": true,
+    "has_elderly": false,
+    "has_disabled": false,
+    "has_pregnant": false
+  }
+}

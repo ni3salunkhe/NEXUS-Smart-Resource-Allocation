@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-400: #818cf8;
+  --color-brand-600: #4f46e5;
+  --color-brand-800: #3730a3;
+  --color-brand-900: #312e81;
+
+  --color-warm-white: #ffffff;
+  --color-warm-surface: #f8fafc;
+  --color-warm-muted: #f1f5f9;
+  --color-warm-border: #e2e8f0;
+
+  --color-background: #f8fafc;
+  
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-headline: "Inter", system-ui, -apple-system, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, sans-serif;
+  --font-label: "Inter", system-ui, -apple-system, sans-serif;
+
+  --color-urgency-critical: #ef4444;
+  --color-urgency-high: #f97316;
+  --color-urgency-medium: #eab308;
+  --color-urgency-low: #22c55e;
+  --color-urgency-minimal: #94a3b8;
+
+  --color-category-food: #f97316;
+  --color-category-health: #3b82f6;
+  --color-category-shelter: #8b5cf6;
+  --color-category-water: #06b6d4;
+  --color-category-education: #10b981;
+  --color-category-livelihood: #f59e0b;
+  --color-category-sanitation: #14b8a6;
+  --color-category-mental-health: #d946ef;
+  --color-category-legal: #64748b;
+  --color-category-documentation: #64748b;
+  --color-category-mobility: #3b82f6;
+  --color-category-other: #cbd5e1;
+
+  --text-hero: 56px;
+  --text-hero--line-height: 1.15;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-background);
+    color: var(--color-brand-900);
+    font-family: var(--font-body);
+  }
+}
+
+/* Emergency Mode Overrides */
+.emergency-mode {
+  --color-warm-white: #ffffff;
+  --color-warm-surface: #ffffff;
+  --color-background: #ffffff;
+  --color-warm-border: #000000;
+  
+  /* High Contrast text */
+  --color-brand-900: #000000;
+  --color-brand-800: #000000;
+  --color-brand-600: #000000;
+  
+  /* Extreme Legibility Updates */
+  font-size: 115% !important;
+  line-height: 1.6 !important;
+}
+
+.emergency-mode h1, 
+.emergency-mode h2, 
+.emergency-mode h3 {
+  font-weight: 800 !important;
+  text-decoration: underline !important;
+  text-decoration-thickness: 2px !important;
+}
+
+.emergency-mode button {
+  min-height: 56px !important;
+  min-width: 56px !important;
+  font-weight: 800 !important;
+  border: 4px solid currentColor !important;
+  border-radius: 0 !important; /* Brutalist sharp corners for clarity */
+}
+
+.emergency-mode input,
+.emergency-mode select,
+.emergency-mode textarea {
+  border: 3px solid #000000 !important;
+  background-color: #ffffff !important;
+  min-height: 56px !important;
+  font-size: 1.25rem !important;
+  color: #000000 !important;
+}
+
+.emergency-mode .bg-white {
+  background-color: #ffffff !important;
+  border: 2px solid #000000 !important;
+}
+
+/* Visual indicators for urgency */
+.emergency-mode .bg-urgency-critical {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+  outline: 4px solid #ef4444 !important;
+}

@@ -1,0 +1,37 @@
+import { 
+  Map, 
+  ListTodo, 
+  Users, 
+  Home, 
+  BarChart3, 
+  LayoutDashboard,
+  MessageSquare,
+  FileText,
+  Plus,
+  Upload,
+  Zap,
+  SlidersHorizontal,
+  Activity,
+  Shield,
+  ClipboardList
+} from 'lucide-react';
+
+export const NAV_ITEMS = [
+  { path: '/', label: 'Overview', icon: BarChart3, feature: 'overview' },
+  { path: '/field', label: 'Field Ops', icon: ClipboardList, feature: 'field' },
+  { path: '/households/intake', label: 'Intake Form', icon: Plus, feature: 'households' },
+  { path: '/needs', label: 'Needs Triage', icon: ListTodo, feature: 'needs' },
+  { path: '/ingestion', label: 'Ingestion', icon: Upload, feature: 'needs' },
+  { path: '/priority-queue', label: 'Priority Queue', icon: Zap, feature: 'needs' },
+  { path: '/tasks', label: 'Task Board', icon: LayoutDashboard, feature: 'tasks' },
+  { path: '/tasks/dispatch', label: 'Dispatch', icon: ClipboardList, feature: 'tasks' },
+  { path: '/map', label: 'Operations Map', icon: Map, feature: 'map' },
+  { path: '/volunteers', label: 'Volunteers', icon: Users, feature: 'volunteers' },
+  { path: '/households', label: 'Households', icon: Home, feature: 'households' },
+  { path: '/analytics', label: 'Analytics', icon: Activity, feature: 'reports' },
+  { path: '/funder', label: 'Funder Report', icon: Shield, feature: 'reports' },
+  { path: '/weights', label: 'Weights Config', icon: SlidersHorizontal, feature: 'settings' },
+  { path: '/inbox', label: 'Inbox', icon: MessageSquare, feature: 'inbox' },
+  { path: '/reports', label: 'Reports', icon: FileText, feature: 'reports' },
+  { path: '/tenants', label: 'Organizations', icon: Shield, feature: 'tenants' },
+];

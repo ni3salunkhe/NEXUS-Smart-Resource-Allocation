@@ -84,7 +84,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "analytics:read", "exports:create", "cross_tenant:manage",
     },
     "coordinator": {
-        "users:read",
+        "users:create", "users:read",
         "households:*", "needs:*", "tasks:*", "volunteers:*",
         "analytics:read",
     },
@@ -151,9 +151,17 @@ async def get_current_user(
             detail="Invalid token type",
         )
 
+    jwt_tenant_id = payload.get("tenant_id")
+
+    # Platform admins have no tenant in JWT. Allow X-Tenant-ID header override.
+    if not jwt_tenant_id:
+        header_tenant = request.headers.get("X-Tenant-ID")
+        if header_tenant and header_tenant not in ("", "null", "undefined"):
+            jwt_tenant_id = header_tenant
+
     ctx = AuthContext(
         user_id=payload["sub"],
-        tenant_id=payload.get("tenant_id"),
+        tenant_id=jwt_tenant_id,
         role=payload["role"],
     )
 
@@ -163,6 +171,7 @@ async def get_current_user(
     request.state.role       = ctx.role
 
     return ctx
+
 
 
 def require_permission(permission: str):

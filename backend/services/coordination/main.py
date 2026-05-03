@@ -38,6 +38,8 @@ from fastapi import FastAPI, Depends, HTTPException, Query, BackgroundTasks, Req
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from asyncpg import UniqueViolationError
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
@@ -46,6 +48,9 @@ from shared.config import get_settings, KafkaTopics
 from shared.database import get_db
 from shared.auth import get_current_user, AuthContext, TenantRLSMiddleware, require_permission
 from shared.kafka import NexusProducer, NexusEvent
+from shared.logging_config import setup_logging, add_global_error_handler
+
+setup_logging("coordination")
 
 from .task_service import task_service, VALID_TRANSITIONS
 from .burnout import compute_volunteer_burnout, apply_rest_day_decay, EXCLUDED_THRESHOLD
@@ -63,6 +68,7 @@ app = FastAPI(
     version="2.0.0",
     docs_url="/docs" if settings.DEBUG else None,
 )
+add_global_error_handler(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -97,6 +103,8 @@ class VolunteerCreate(BaseModel):
     preferred_channel:     str             = "push"
     latitude:              Optional[float] = None
     longitude:             Optional[float] = None
+    tenant_id:             Optional[UUID]  = None # Only used by platform_admin
+    skill_verification:    dict             = {}
 
 
 class VolunteerUpdate(BaseModel):
@@ -151,6 +159,35 @@ class SMSWebhook(BaseModel):
     # Twilio sends these field names
 
 
+# ── GAP Endpoints Schemas ─────────────────────────────────────
+class OverrideRecordRequest(BaseModel):
+    task_id:          UUID
+    suggested_vol_id: Optional[UUID] = None
+    suggested_score:  Optional[float] = None
+    chosen_vol_id:    UUID
+    override_reason:  str
+
+
+class AvailabilityResponse(BaseModel):
+    volunteer_id:      UUID
+    is_available_now:  bool
+    burnout_risk_score: float
+    active_tasks:      int
+    schedule:          dict
+
+
+class NotificationPreferencesUpdate(BaseModel):
+    preferred_channel: str
+    whatsapp_number:   Optional[str] = None
+    phone_number:      Optional[str] = None
+    push_token:        Optional[str] = None
+
+
+class BriefingPreviewRequest(BaseModel):
+    language: str = "en"
+    variables: dict = {}
+
+
 # ── VOLUNTEERS ────────────────────────────────────────────────
 @app.post("/volunteers", status_code=201)
 async def create_volunteer(
@@ -158,15 +195,27 @@ async def create_volunteer(
     ctx: AuthContext = Depends(require_permission("volunteers:create")),
     db=Depends(get_db),
 ):
+    # Determine effective tenant_id
+    effective_tid = ctx.tenant_id
+    if ctx.role == 'platform_admin' and body.tenant_id:
+        effective_tid = str(body.tenant_id)
+        
+    if not effective_tid:
+        raise HTTPException(
+            status_code=400, 
+            detail="Organization context missing. System Administrators must specify a 'tenant_id' to register volunteers."
+        )
+
     import json
     loc_clause = ""
     params: dict = {
-        "tid":      ctx.tenant_id,
+        "tid":      effective_tid,
         "uid":      ctx.user_id,
-        "langs":    "{" + ",".join(body.preferred_language) + "}",
-        "skills":   "{" + ",".join(body.skills) + "}",
+        "langs":    body.preferred_language,
+        "skills":   body.skills,
         "prof":     json.dumps(body.skill_proficiency),
-        "tags":     "{" + ",".join(body.cultural_context_tags) + "}",
+        "verif":    json.dumps(body.skill_verification),
+        "tags":     body.cultural_context_tags,
         "dist":     body.max_distance_km,
         "avail":    json.dumps(body.availability_schedule),
         "ward":     body.ward_id,
@@ -175,36 +224,49 @@ async def create_volunteer(
         "channel":  body.preferred_channel,
     }
 
-    if body.latitude and body.longitude:
-        loc_clause = ", location_home_point = ST_GeographyFromText(:loc_wkt)"
-        params["loc_wkt"] = f"POINT({body.longitude} {body.latitude})"
-
-    result = await db.execute(
-        text(f"""
-            INSERT INTO volunteers (
-                tenant_id, user_id, preferred_language, skills, skill_proficiency,
-                cultural_context_tags, max_distance_km, availability_schedule,
-                ward_id, whatsapp_number, phone_number, preferred_channel
-            )
-            VALUES (
-                :tid, :uid, :langs::text[], :skills::text[], CAST(:prof AS JSONB),
-                :tags::text[], :dist, CAST(:avail AS JSONB),
-                :ward, :wa_num, :ph_num, :channel
-            )
-            RETURNING volunteer_id, created_at
-        """),
-        params
-    )
-    row = result.fetchone()
-    vid = str(row.volunteer_id)
-
-    if loc_clause:
-        await db.execute(
-            text(f"UPDATE volunteers SET {loc_clause.strip(', ')} WHERE volunteer_id=:vid"),
-            {"loc_wkt": params["loc_wkt"], "vid": vid}
+    try:
+        result = await db.execute(
+            text(f"""
+                INSERT INTO volunteers (
+                    tenant_id, user_id, preferred_language, skills, skill_proficiency,
+                    skill_verification,
+                    cultural_context_tags, max_distance_km, availability_schedule,
+                    ward_id, whatsapp_number, phone_number, preferred_channel
+                )
+                VALUES (
+                    :tid, :uid, CAST(:langs AS text[]), CAST(:skills AS text[]), CAST(:prof AS JSONB),
+                    CAST(:verif AS JSONB),
+                    CAST(:tags AS text[]), :dist, CAST(:avail AS JSONB),
+                    :ward, :wa_num, :ph_num, :channel
+                )
+                RETURNING volunteer_id, created_at
+            """),
+            params
         )
-
-    return {"volunteer_id": vid, "created_at": row.created_at.isoformat()}
+        row = result.fetchone()
+        vid = str(row.volunteer_id)
+        
+        if body.latitude and body.longitude:
+            loc_wkt = f"POINT({body.longitude} {body.latitude})"
+            await db.execute(
+                text("UPDATE volunteers SET location_home_point = ST_GeographyFromText(:loc_wkt) WHERE volunteer_id=:vid"),
+                {"loc_wkt": loc_wkt, "vid": vid}
+            )
+            
+        await db.commit()
+        return {"volunteer_id": vid, "created_at": row.created_at.isoformat()}
+        
+    except IntegrityError as e:
+        await db.rollback()
+        if "unique constraint \"volunteers_user_id_key\"" in str(e).lower():
+            raise HTTPException(
+                status_code=400,
+                detail="Volunteer profile already exists for this user account."
+            )
+        raise e
+    except Exception as e:
+        await db.rollback()
+        raise e
 
 
 @app.get("/volunteers")
@@ -218,8 +280,18 @@ async def list_volunteers(
     ctx: AuthContext = Depends(require_permission("volunteers:read")),
     db=Depends(get_db),
 ):
-    conditions = ["tenant_id = :tid"]
-    params: dict = {"tid": ctx.tenant_id, "limit": limit, "offset": offset}
+    conditions = []
+    params: dict = {"limit": limit, "offset": offset}
+
+    if ctx.role != 'platform_admin':
+        conditions.append("tenant_id = :tid")
+        params["tid"] = ctx.tenant_id
+    else:
+        # Platform admin can filter by tenant_id if provided (could add query param later)
+        pass
+
+    if not conditions:
+        conditions.append("1=1")
 
     if active  is not None:
         conditions.append("active = :active"); params["active"] = active
@@ -253,10 +325,14 @@ async def get_volunteer(
     ctx: AuthContext = Depends(require_permission("volunteers:read")),
     db=Depends(get_db),
 ):
-    result = await db.execute(
-        text("SELECT * FROM volunteers WHERE volunteer_id=:vid AND tenant_id=:tid"),
-        {"vid": str(volunteer_id), "tid": ctx.tenant_id}
-    )
+    query = "SELECT * FROM volunteers WHERE volunteer_id=:vid"
+    params = {"vid": str(volunteer_id)}
+    
+    if ctx.role != 'platform_admin':
+        query += " AND tenant_id=:tid"
+        params["tid"] = ctx.tenant_id
+
+    result = await db.execute(text(query), params)
     row = result.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Volunteer not found")
@@ -326,19 +402,23 @@ async def record_location(
             "bat": body.battery_pct,
         }
     )
+    await db.commit()  # H5: persist location immediately
 
-    await NexusProducer.get().emit(
-        KafkaTopics.VOLUNTEER_LOCATION_UPDATED,
-        NexusEvent(
-            event_type=KafkaTopics.VOLUNTEER_LOCATION_UPDATED,
-            payload={
-                "volunteer_id": str(volunteer_id),
-                "lat": body.latitude, "lon": body.longitude,
-            },
-            tenant_id=ctx.tenant_id,
-        ),
-        key=str(volunteer_id),
-    )
+    try:
+        await NexusProducer.get().emit(
+            KafkaTopics.VOLUNTEER_LOCATION_UPDATED,
+            NexusEvent(
+                event_type=KafkaTopics.VOLUNTEER_LOCATION_UPDATED,
+                payload={
+                    "volunteer_id": str(volunteer_id),
+                    "lat": body.latitude, "lon": body.longitude,
+                },
+                tenant_id=ctx.tenant_id,
+            ),
+            key=str(volunteer_id),
+        )
+    except Exception as _ke:
+        logger.warning(f"Kafka emit skipped (degraded mode): {_ke}")
     return {"recorded": True}
 
 
@@ -372,12 +452,15 @@ async def create_task(
     result = await task_service.create_task(
         db, body.need_id, body.household_id, ctx.tenant_id, ctx.user_id
     )
-    await NexusProducer.get().emit(
-        KafkaTopics.TASK_CREATED,
-        NexusEvent(event_type=KafkaTopics.TASK_CREATED,
-                   payload=result, tenant_id=ctx.tenant_id, user_id=ctx.user_id),
-        key=result["task_id"],
-    )
+    try:
+        await NexusProducer.get().emit(
+            KafkaTopics.TASK_CREATED,
+            NexusEvent(event_type=KafkaTopics.TASK_CREATED,
+                       payload=result, tenant_id=ctx.tenant_id, user_id=ctx.user_id),
+            key=result["task_id"],
+        )
+    except Exception as _ke:
+        logger.warning(f"Kafka emit skipped (degraded mode): {_ke}")
     return result
 
 
@@ -540,13 +623,16 @@ async def dispatch_task(
         preferred_channel=vol_dict.get("preferred_channel", "push"),
     )
 
-    await NexusProducer.get().emit(
-        KafkaTopics.TASK_DISPATCHED,
-        NexusEvent(event_type=KafkaTopics.TASK_DISPATCHED,
-                   payload={**result, "match_score": score},
-                   tenant_id=ctx.tenant_id, user_id=ctx.user_id),
-        key=str(task_id),
-    )
+    try:
+        await NexusProducer.get().emit(
+            KafkaTopics.TASK_DISPATCHED,
+            NexusEvent(event_type=KafkaTopics.TASK_DISPATCHED,
+                       payload={**result, "match_score": score},
+                       tenant_id=ctx.tenant_id, user_id=ctx.user_id),
+            key=str(task_id),
+        )
+    except Exception as _ke:
+        logger.warning(f"Kafka emit skipped (degraded mode): {_ke}")
     return result
 
 
@@ -558,12 +644,15 @@ async def accept_task(
     db=Depends(get_db),
 ):
     result = await task_service.accept(db, str(task_id), volunteer_id, ctx.tenant_id)
-    await NexusProducer.get().emit(
-        KafkaTopics.TASK_ACCEPTED,
-        NexusEvent(event_type=KafkaTopics.TASK_ACCEPTED, payload=result,
-                   tenant_id=ctx.tenant_id, user_id=volunteer_id),
-        key=str(task_id),
-    )
+    try:
+        await NexusProducer.get().emit(
+            KafkaTopics.TASK_ACCEPTED,
+            NexusEvent(event_type=KafkaTopics.TASK_ACCEPTED, payload=result,
+                       tenant_id=ctx.tenant_id, user_id=volunteer_id),
+            key=str(task_id),
+        )
+    except Exception as _ke:
+        logger.warning(f"Kafka emit skipped (degraded mode): {_ke}")
     return result
 
 
@@ -586,12 +675,15 @@ async def start_task(
     db=Depends(get_db),
 ):
     result = await task_service.start(db, str(task_id), volunteer_id, ctx.tenant_id)
-    await NexusProducer.get().emit(
-        KafkaTopics.TASK_STARTED,
-        NexusEvent(event_type=KafkaTopics.TASK_STARTED, payload=result,
-                   tenant_id=ctx.tenant_id, user_id=volunteer_id),
-        key=str(task_id),
-    )
+    try:
+        await NexusProducer.get().emit(
+            KafkaTopics.TASK_STARTED,
+            NexusEvent(event_type=KafkaTopics.TASK_STARTED, payload=result,
+                       tenant_id=ctx.tenant_id, user_id=volunteer_id),
+            key=str(task_id),
+        )
+    except Exception as _ke:
+        logger.warning(f"Kafka emit skipped (degraded mode): {_ke}")
     return result
 
 
@@ -608,12 +700,15 @@ async def complete_task(
         body.outcome_status, body.outcome_notes,
         body.materials_provided, body.follow_up_required,
     )
-    await NexusProducer.get().emit(
-        KafkaTopics.TASK_COMPLETED,
-        NexusEvent(event_type=KafkaTopics.TASK_COMPLETED, payload=result,
-                   tenant_id=ctx.tenant_id, user_id=volunteer_id),
-        key=str(task_id),
-    )
+    try:
+        await NexusProducer.get().emit(
+            KafkaTopics.TASK_COMPLETED,
+            NexusEvent(event_type=KafkaTopics.TASK_COMPLETED, payload=result,
+                       tenant_id=ctx.tenant_id, user_id=volunteer_id),
+            key=str(task_id),
+        )
+    except Exception as _ke:
+        logger.warning(f"Kafka emit skipped (degraded mode): {_ke}")
     return result
 
 
@@ -648,6 +743,174 @@ async def sms_webhook(
             ctx.tenant_id, result.get("reason", ""),
         )
     return result
+
+
+# ── GAP-01: Override Recording ────────────────────────────────
+@app.post("/coordination/overrides/record", status_code=201)
+async def record_coordinator_override(
+    body: OverrideRecordRequest,
+    ctx: AuthContext = Depends(require_permission("tasks:update")),
+    db=Depends(get_db),
+):
+    """
+    GAP-01: Record a coordinator override decision.
+    Atomic with task assignment if done via UI.
+    """
+    from .matching.override_learning import record_override
+
+    # Verify task exists
+    task = await task_service.get_task(db, str(body.task_id), ctx.tenant_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Fetch need details for context
+    need_row = await db.execute(
+        text("SELECT category, ward_id, urgency_score FROM need_records WHERE need_id=:nid"),
+        {"nid": str(task["need_id"])}
+    )
+    need = need_row.fetchone()
+
+    override_id = await record_override(
+        db               = db,
+        task_id          = str(body.task_id),
+        tenant_id        = ctx.tenant_id,
+        suggested_vol_id = str(body.suggested_vol_id) if body.suggested_vol_id else None,
+        suggested_score  = body.suggested_score,
+        chosen_vol_id    = str(body.chosen_vol_id),
+        coordinator_id   = ctx.user_id,
+        override_reason  = body.override_reason,
+        need_category    = need.category if need else None,
+        need_ward_id     = need.ward_id if need else None,
+        need_urgency     = need.urgency_score if need else None,
+    )
+
+    await db.commit()
+    return {"override_id": override_id, "status": "recorded"}
+
+
+# ── GAP-03: Volunteer Availability ────────────────────────────
+@app.get("/volunteers/{volunteer_id}/availability", response_model=AvailabilityResponse)
+async def get_volunteer_availability(
+    volunteer_id: UUID,
+    ctx: AuthContext = Depends(require_permission("volunteers:read")),
+    db=Depends(get_db),
+):
+    """GAP-03: Compute real-time availability and burnout risk."""
+    vol_row = await db.execute(
+        text("SELECT * FROM volunteers WHERE volunteer_id=:vid AND tenant_id=:tid"),
+        {"vid": str(volunteer_id), "tid": ctx.tenant_id}
+    )
+    vol = vol_row.fetchone()
+    if not vol:
+        raise HTTPException(status_code=404, detail="Volunteer not found")
+
+    # Count active tasks
+    task_count_row = await db.execute(
+        text("SELECT COUNT(*) FROM tasks WHERE assigned_volunteer_id=:vid AND status IN ('dispatched', 'accepted', 'in_progress')"),
+        {"vid": str(volunteer_id)}
+    )
+    active_tasks = task_count_row.scalar()
+
+    # Burnout score
+    burnout = await compute_volunteer_burnout(db, str(volunteer_id), ctx.tenant_id)
+
+    return AvailabilityResponse(
+        volunteer_id       = volunteer_id,
+        is_available_now   = vol.is_available_now and active_tasks == 0,
+        burnout_risk_score = burnout.score,
+        active_tasks       = active_tasks,
+        schedule           = vol.availability_schedule or {},
+    )
+
+
+# ── GAP-05: Notification Preferences ──────────────────────────
+@app.get("/volunteers/{volunteer_id}/notifications")
+async def get_notification_prefs(
+    volunteer_id: UUID,
+    ctx: AuthContext = Depends(require_permission("volunteers:read")),
+    db=Depends(get_db),
+):
+    """GAP-05: Fetch only notification configuration."""
+    result = await db.execute(
+        text("""
+            SELECT preferred_channel, whatsapp_number, phone_number, push_token
+            FROM volunteers WHERE volunteer_id=:vid AND tenant_id=:tid
+        """),
+        {"vid": str(volunteer_id), "tid": ctx.tenant_id}
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Volunteer not found")
+    return dict(row._mapping)
+
+
+@app.post("/volunteers/{volunteer_id}/notifications/test")
+async def test_notification(
+    volunteer_id: UUID,
+    ctx: AuthContext = Depends(require_permission("volunteers:update")),
+    db=Depends(get_db),
+):
+    """GAP-05: Trigger a test notification."""
+    vol_row = await db.execute(
+        text("SELECT * FROM volunteers WHERE volunteer_id=:vid AND tenant_id=:tid"),
+        {"vid": str(volunteer_id), "tid": ctx.tenant_id}
+    )
+    vol = vol_row.fetchone()
+    if not vol:
+        raise HTTPException(status_code=404, detail="Volunteer not found")
+
+    res = await dispatch_notification(
+        db              = db,
+        task_id         = "test_id",
+        volunteer_id    = str(volunteer_id),
+        tenant_id       = ctx.tenant_id,
+        template_key    = "reminder",
+        language        = vol.preferred_language[0] if vol.preferred_language else "en",
+        variables       = {"location": "Test Location"},
+        push_token      = vol.push_token,
+        whatsapp_number = vol.whatsapp_number,
+        phone_number    = vol.phone_number,
+        preferred_channel = vol.preferred_channel,
+    )
+    return {"sent": res.sent, "channel": res.channel, "error": res.error}
+
+
+# ── GAP-07: Task Briefing Preview ─────────────────────────────
+@app.post("/tasks/{task_id}/briefing/preview")
+async def preview_briefing(
+    task_id: UUID,
+    body: BriefingPreviewRequest,
+    ctx: AuthContext = Depends(require_permission("tasks:read")),
+    db=Depends(get_db),
+):
+    """GAP-07: Preview rendered briefing message without sending."""
+    from .notifications.service import _build_message
+
+    # Reuse variables from task/need if not provided
+    if not body.variables:
+        task = await task_service.get_task(db, str(task_id), ctx.tenant_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        need_row = await db.execute(
+            text("SELECT category, ward_id, beneficiary_count, description FROM need_records WHERE need_id=:nid"),
+            {"nid": str(task["need_id"])}
+        )
+        nd = need_row.fetchone()
+        if nd:
+            body.variables = {
+                "category":        nd.category,
+                "location":        nd.ward_id,
+                "beneficiary_count": nd.beneficiary_count,
+                "description":     (nd.description or "")[:200],
+            }
+
+    message = _build_message("dispatch", body.language, body.variables)
+    return {
+        "message":   message,
+        "variables": body.variables,
+        "language":  body.language
+    }
 
 
 # ── Maintenance ───────────────────────────────────────────────

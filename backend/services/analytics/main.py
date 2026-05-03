@@ -29,15 +29,16 @@ from shared.config import get_settings, KafkaTopics
 from shared.database import get_db
 from shared.auth import get_current_user, AuthContext, TenantRLSMiddleware, require_permission
 from shared.kafka import NexusProducer, NexusEvent
+from shared.logging_config import setup_logging, add_global_error_handler
+
+setup_logging("analytics")
 
 from .impact_metrics import (
     compute_period_metrics, get_household_improvement_dashboard,
     get_volunteer_performance_summary, get_cross_ngo_duplication_rate,
 )
 from .feedback_loop import process_task_completion
-from services.coordination.matching.override_learning import (
-    get_override_summary, get_override_patterns,
-)
+import httpx
 
 settings = get_settings()
 logger   = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ app = FastAPI(
     version="2.0.0",
     docs_url="/docs" if settings.DEBUG else None,
 )
+add_global_error_handler(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -222,7 +224,20 @@ async def override_summary(
     db=Depends(get_db),
 ):
     """How often do coordinators override the algorithm, and does it help?"""
-    return await get_override_summary(db, ctx.tenant_id, days_back)
+    import httpx
+    coord_url = settings.COORDINATION_URL if hasattr(settings, "COORDINATION_URL") else "http://localhost:8003"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{coord_url}/coordination/overrides/summary",
+                headers={"X-Tenant-ID": ctx.tenant_id},
+                params={"days_back": days_back}
+            )
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as e:
+        logger.warning(f"Coordination summary call failed (degraded mode): {e}")
+    return {}
 
 
 @app.get("/overrides/patterns")
@@ -235,7 +250,20 @@ async def override_patterns(
     Where does the algorithm consistently underperform?
     Returns category+ward combinations with high override rates.
     """
-    return await get_override_patterns(db, ctx.tenant_id, days_back)
+    import httpx
+    coord_url = settings.COORDINATION_URL if hasattr(settings, "COORDINATION_URL") else "http://localhost:8003"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{coord_url}/coordination/overrides/patterns",
+                headers={"X-Tenant-ID": ctx.tenant_id},
+                params={"days_back": days_back}
+            )
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as e:
+        logger.warning(f"Coordination patterns call failed (degraded mode): {e}")
+    return []
 
 
 # ── Cross-NGO Duplication ─────────────────────────────────────

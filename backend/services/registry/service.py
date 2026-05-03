@@ -14,7 +14,7 @@ from .schemas import (
     HouseholdCreate, HouseholdUpdate, HouseholdResponse, MemberResponse,
     ConsentCreate, ConsentResponse, CrossTenantLinkCreate, CrossTenantLinkResponse,
     HouseholdHistoryResponse, MergeRequest, SearchRequest,
-    IdentityResolutionRequest, ResolutionResult
+    IdentityResolutionRequest, ResolutionResult, GlobalSearchResponse, WardStat, PartnershipPolicy
 )
 from .identity_resolution import resolve_household
 
@@ -75,15 +75,15 @@ class HouseholdRegistryService:
         result = await db.execute(
             text("""
                 INSERT INTO households (
-                    tenant_id, ward_id,
+                    tenant_id, ward_id, display_name,
                     location_geo, location_confidence, location_description, landmark_tags,
                     dwelling_type, economic_tier, created_by
                 )
                 VALUES (
-                    :tid, :ward_id,
-                    CASE WHEN :loc_wkt IS NOT NULL
-                         THEN ST_GeographyFromText(:loc_wkt) END,
-                    :loc_conf, :loc_desc, :landmarks::text[],
+                    :tid, :ward_id, :display_name,
+                    CASE WHEN CAST(:loc_wkt AS TEXT) IS NOT NULL
+                         THEN ST_GeographyFromText(CAST(:loc_wkt AS TEXT)) END,
+                    :loc_conf, :loc_desc, CAST(:landmarks AS text[]),
                     :dwelling, :econ_tier, :created_by
                 )
                 RETURNING household_id, created_at, updated_at
@@ -91,6 +91,7 @@ class HouseholdRegistryService:
             {
                 "tid":        tenant_id,
                 "ward_id":    data.ward_id if data.ward_id else (data.location.description if data.location else None),
+                "display_name": data.display_name,
                 "loc_wkt":    loc_wkt,
                 "loc_conf":   data.location.confidence if data.location else 0.5,
                 "loc_desc":   data.location.description if data.location else None,
@@ -244,6 +245,10 @@ class HouseholdRegistryService:
         if data.ward_id is not None:
             sets.append("ward_id = :ward_id")
             params["ward_id"] = data.ward_id
+
+        if data.display_name is not None:
+            sets.append("display_name = :display_name")
+            params["display_name"] = data.display_name
 
         if data.dwelling_type is not None:
             sets.append("dwelling_type = :dwelling")
@@ -445,12 +450,14 @@ class HouseholdRegistryService:
             }
         )
         row = result.fetchone()
-        # Assign global_household_id to both households
+        # M11: assign global_household_id to both households via separate UPDATEs
+        # (SQLAlchemy text() does not expand IN(:a,:b) tuples)
         global_id = str(row.global_household_id)
-        await db.execute(
-            text("UPDATE households SET global_household_id = :gid WHERE household_id IN (:a, :b)"),
-            {"gid": global_id, "a": household_id_a, "b": str(data.household_id_tenant_b)}
-        )
+        for hh_id in [household_id_a, str(data.household_id_tenant_b)]:
+            await db.execute(
+                text("UPDATE households SET global_household_id = :gid WHERE household_id = :hid"),
+                {"gid": global_id, "hid": hh_id}
+            )
         return {
             "link_id": str(row.link_id),
             "global_household_id": global_id,
@@ -538,6 +545,173 @@ class HouseholdRegistryService:
             {"freq": freq, "hid": household_id}
         )
         return freq
+
+
+    # ── GAP-06: BULK CONSENT ──────────────────────────────────
+    async def get_all_consent(
+        self,
+        db: AsyncSession,
+        household_id: str,
+        tenant_id: str,
+    ) -> List[dict]:
+        result = await db.execute(
+            text("""
+                SELECT * FROM household_consent
+                WHERE household_id = :hid AND revoked_at IS NULL AND opt_out = FALSE
+            """),
+            {"hid": household_id}
+        )
+        return [dict(r._mapping) for r in result.fetchall()]
+
+    # ── GAP-02: GLOBAL SEARCH ─────────────────────────────────
+    async def global_search(
+        self,
+        db: AsyncSession,
+        query: str,
+        tenant_id: str,
+    ) -> dict:
+        import httpx
+        from shared.config import get_settings
+
+        # 1. Search Needs (Intelligence Service HTTP call)
+        # H6: replaced direct import of es_service with HTTP request
+        settings = get_settings()
+        intel_url = settings.INTELLIGENCE_URL if hasattr(settings, "INTELLIGENCE_URL") else "http://localhost:8004"
+        needs = []
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{intel_url}/search",
+                    params={"q": query},
+                    headers={"X-Tenant-ID": tenant_id}
+                )
+                if resp.status_code == 200:
+                    needs = resp.json().get("results", [])
+        except Exception as e:
+            import logging
+            logging.warning(f"Intelligence search failed (degraded mode): {e}")
+
+        # 2. Search Households (DB)
+        hh_res = await db.execute(
+            text("""
+                SELECT household_id, location_description, landmark_tags, ward_id, vulnerability_score, status
+                FROM households
+                WHERE tenant_id = :tid AND (location_description ILIKE :q OR ward_id ILIKE :q)
+                LIMIT 5
+            """),
+            {"tid": tenant_id, "q": f"%{query}%"}
+        )
+        households = [dict(r._mapping) for r in hh_res.fetchall()]
+
+        # 3. Search Volunteers (DB)
+        vol_res = await db.execute(
+            text("""
+                SELECT volunteer_id, tenant_id, ward_id, skills, active
+                FROM volunteers
+                WHERE tenant_id = :tid AND (ward_id ILIKE :q)
+                LIMIT 5
+            """),
+            {"tid": tenant_id, "q": f"%{query}%"}
+        )
+        volunteers = [dict(r._mapping) for r in vol_res.fetchall()]
+
+        return {
+            "needs":      needs,
+            "households": households,
+            "volunteers": volunteers,
+        }
+
+    # ── GAP-09: WARD LOOKUP ───────────────────────────────────
+    async def list_wards(
+        self,
+        db: AsyncSession,
+        tenant_id: str,
+    ) -> List[dict]:
+        # Try ward_stats first
+        result = await db.execute(
+            text("""
+                SELECT ward_id, 
+                       0 as total_households, 
+                       total_needs_open as active_needs, 
+                       avg_urgency_score as avg_vuln_score
+                FROM ward_stats
+                WHERE tenant_id = :tid
+            """),
+            {"tid": tenant_id}
+        )
+        rows = result.fetchall()
+        if not rows:
+            # Fallback: aggregate from households
+            result = await db.execute(
+                text("""
+                    SELECT ward_id, 
+                           COUNT(*) as total_households, 
+                           0 as active_needs, 
+                           AVG(vulnerability_score) as avg_vuln_score
+                    FROM households
+                    WHERE tenant_id = :tid AND ward_id IS NOT NULL
+                    GROUP BY ward_id
+                """),
+                {"tid": tenant_id}
+            )
+            rows = result.fetchall()
+        return [dict(r._mapping) for r in rows]
+
+    # ── GAP-10: PARTNERSHIPS ──────────────────────────────────
+    async def get_partnerships(
+        self,
+        db: AsyncSession,
+        tenant_id: str,
+    ) -> List[dict]:
+        result = await db.execute(
+            text("SELECT settings FROM tenants WHERE tenant_id = :tid"),
+            {"tid": tenant_id}
+        )
+        row = result.fetchone()
+        # M12: Guard against NULL settings column
+        raw_settings = row.settings if row else None
+        settings = raw_settings if isinstance(raw_settings, dict) else {}
+        partnerships = settings.get("partnerships", [])
+        return partnerships
+
+    async def update_partnership(
+        self,
+        db: AsyncSession,
+        tenant_id: str,
+        partner_id: str,
+        policy: PartnershipPolicy,
+    ) -> dict:
+        import json
+        result = await db.execute(
+            text("SELECT settings FROM tenants WHERE tenant_id = :tid"),
+            {"tid": tenant_id}
+        )
+        row = result.fetchone()
+        settings = row.settings if row else {}
+        partnerships = settings.get("partnerships", [])
+
+        # Update or append
+        found = False
+        new_entry = {
+            "partner_id":    partner_id,
+            "policy":        policy.policy,
+            "shared_fields": policy.shared_fields
+        }
+        for i, p in enumerate(partnerships):
+            if p.get("partner_id") == partner_id:
+                partnerships[i] = new_entry
+                found = True
+                break
+        if not found:
+            partnerships.append(new_entry)
+
+        settings["partnerships"] = partnerships
+        await db.execute(
+            text("UPDATE tenants SET settings = CAST(:s AS JSONB) WHERE tenant_id = :tid"),
+            {"s": json.dumps(settings), "tid": tenant_id}
+        )
+        await db.commit()
+        return {"updated": True, "partner_id": partner_id}
 
 
 # Singleton

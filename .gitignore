@@ -51,3 +51,9 @@ data/
 
 # Docker
 docker-compose.override.yml
+
+# Temporary and Test Reports
+scratch/
+backend/scratch/
+test_report.json
+test_report.md

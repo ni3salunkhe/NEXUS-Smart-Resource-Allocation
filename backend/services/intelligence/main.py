@@ -31,6 +31,9 @@ from shared.config import get_settings, KafkaTopics
 from shared.database import get_db
 from shared.auth import get_current_user, AuthContext, TenantRLSMiddleware, require_permission
 from shared.kafka import NexusProducer, NexusEvent
+from shared.logging_config import setup_logging, add_global_error_handler
+
+setup_logging("intelligence")
 
 from .scoring import (
     calculate_urgency_score, UrgencyWeights, should_escalate
@@ -54,6 +57,7 @@ app = FastAPI(
     version="2.0.0",
     docs_url="/docs" if settings.DEBUG else None,
 )
+add_global_error_handler(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -67,7 +71,11 @@ app.add_middleware(TenantRLSMiddleware)
 @app.on_event("startup")
 async def startup():
     await NexusProducer.get().start()
-    await ensure_indexes(settings.ELASTICSEARCH_URL)
+    # M8: Non-fatal ES startup — service works in degraded mode without Elasticsearch
+    try:
+        await ensure_indexes(settings.ELASTICSEARCH_URL)
+    except Exception as e:
+        logger.warning(f"Elasticsearch unavailable at startup (degraded mode): {e}")
 
 
 @app.on_event("shutdown")
@@ -104,17 +112,19 @@ async def score_one_need(
     if new_score is None:
         raise HTTPException(status_code=404, detail="Need not found")
 
-    # Emit event
-    await NexusProducer.get().emit(
-        KafkaTopics.NEED_URGENCY_UPDATED,
-        NexusEvent(
-            event_type=KafkaTopics.NEED_URGENCY_UPDATED,
-            payload={"need_id": str(need_id), "urgency_score": new_score},
-            tenant_id=ctx.tenant_id,
-            user_id=ctx.user_id,
-        ),
-        key=str(need_id),
-    )
+    try:
+        await NexusProducer.get().emit(
+            KafkaTopics.NEED_URGENCY_UPDATED,
+            NexusEvent(
+                event_type=KafkaTopics.NEED_URGENCY_UPDATED,
+                payload={"need_id": str(need_id), "urgency_score": new_score},
+                tenant_id=ctx.tenant_id,
+                user_id=ctx.user_id,
+            ),
+            key=str(need_id),
+        )
+    except Exception as _ke:
+        logger.warning(f"Kafka emit skipped (degraded mode): {_ke}")
     return {"need_id": str(need_id), "urgency_score": new_score}
 
 
@@ -164,7 +174,15 @@ async def get_escalations(
     ctx: AuthContext = Depends(require_permission("needs:read")),
     db=Depends(get_db),
 ):
-    """Needs above escalation threshold that have been unassigned > escalation_minutes."""
+    """Needs above per-tenant escalation threshold unassigned > 2 hours."""
+    # M14: Read threshold from tenant config; fall back to 0.90
+    cfg_row = await db.execute(
+        text("SELECT escalation_threshold FROM urgency_weight_configs WHERE tenant_id = :tid"),
+        {"tid": ctx.tenant_id},
+    )
+    cfg = cfg_row.fetchone()
+    threshold = float(cfg.escalation_threshold) if cfg and cfg.escalation_threshold else 0.90
+
     result = await db.execute(
         text("""
             SELECT need_id, category, urgency_score, severity_score,
@@ -172,12 +190,12 @@ async def get_escalations(
             FROM need_records
             WHERE tenant_id = :tid
               AND status IN ('unverified','verified')
-              AND urgency_score >= 0.90
+              AND urgency_score >= :threshold
               AND ingested_at <= NOW() - INTERVAL '2 hours'
             ORDER BY urgency_score DESC
             LIMIT 50
         """),
-        {"tid": ctx.tenant_id}
+        {"tid": ctx.tenant_id, "threshold": threshold}
     )
     return [dict(r._mapping) for r in result.fetchall()]
 
@@ -245,14 +263,17 @@ async def generate_gap(
 ):
     report = await generate_gap_report(db, ctx.tenant_id)
 
-    await NexusProducer.get().emit(
-        KafkaTopics.GAP_REPORT_GENERATED,
-        NexusEvent(
-            event_type=KafkaTopics.GAP_REPORT_GENERATED,
-            payload={"tenant_id": ctx.tenant_id, "summary": report["summary"]},
-            tenant_id=ctx.tenant_id,
-        ),
-    )
+    try:
+        await NexusProducer.get().emit(
+            KafkaTopics.GAP_REPORT_GENERATED,
+            NexusEvent(
+                event_type=KafkaTopics.GAP_REPORT_GENERATED,
+                payload={"tenant_id": ctx.tenant_id, "summary": report["summary"]},
+                tenant_id=ctx.tenant_id,
+            ),
+        )
+    except Exception as _ke:
+        logger.warning(f"Kafka emit skipped (degraded mode): {_ke}")
     return report
 
 
@@ -308,11 +329,9 @@ async def get_weights(
 @app.put("/weights")
 async def update_weights(
     body: WeightUpdateRequest,
-    ctx: AuthContext = Depends(require_permission("analytics:read")),
+    ctx: AuthContext = Depends(require_permission("needs:*")),  # H8: single permission check
     db=Depends(get_db),
 ):
-    ctx.require("ngo_admin")
-
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")

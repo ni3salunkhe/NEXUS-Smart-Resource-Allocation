@@ -17,7 +17,7 @@ TENANTS = [
     {
         "tenant_id": "11111111-0000-0000-0000-000000000001",
         "name": "Asha Welfare Trust",
-        "slug": "asha-welfare",
+        "slug": "default",
         "contact_email": "coordinator@asha.org",
         "plan_tier": "standard",
     },
@@ -80,6 +80,15 @@ USERS = [
         "password": "test_coord_123",
         "role": "coordinator",
         "preferred_language": "hi",
+    },
+    # Platform Admin
+    {
+        "user_id": "00000000-0000-0000-0000-000000000000",
+        "tenant_id": None,
+        "email": "admin@nexus.internal",
+        "password": "admin_dev_only",
+        "role": "platform_admin",
+        "preferred_language": "en",
     },
 ]
 

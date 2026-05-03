@@ -9,39 +9,40 @@ NEXUS is a robust, multi-tenant digital infrastructure designed to empower NGOs 
 The NEXUS platform provides a unified gateway for ingesting needs and managing household registries across multiple organizations (tenants). It leverages geospatial intelligence, natural language processing, and automated deduplication to ensure data integrity and operational efficiency.
 
 ### Key Architectural Pillars:
-* **Multi-Tenant Isolation**: Row-Level Security (RLS) ensures NGO data remains strictly private.
-* **Geospatial Intelligence**: PostGIS-powered tracking for rapid disaster response.
+* **Multi-Tenant Isolation**: Row-Level Security (RLS) ensures NGO data remains strictly private across the DB and API.
+* **Geospatial Intelligence**: PostGIS-powered tracking for rapid disaster response and proximity-based dispatch.
 * **Intelligent Ingestion**: Multi-channel pipeline with OCR and NLP capabilities.
 * **Identity Resolution**: Advanced ensemble matching to prevent duplicate assistance.
+* **Role-Based Workflows**: Tailored interfaces and routing for Platform Admins, Tenant Coordinators, and Field Volunteers.
 
 ---
 
-## 🛠️ Development Phases
+## 🛠️ Architecture & Modules
 
-### Phase 0.5: Household Registry & Security
-* **Infrastructure**: PostgreSQL + PostGIS baseline with custom migration logic.
-* **Security**: Hardened Tenant isolation via PostgreSQL policies.
-* **Ledger**: Append-only history tracking for audit compliance.
-* **Resolution**: 4-stage identity cascade (Exact, Geo, Fuzzy, Composite).
+### 1. Frontend Client (React/Vite)
+* **Stack**: React 19, Vite, Tailwind CSS, Zustand, React-Query, Leaflet.
+* **Features**:
+  * Role-based dashboards (Admin, Coordinator, Volunteer).
+  * Real-time WebSocket updates for needs and active workflows.
+  * Geospatial household mapping and multi-tenant selectors.
+  * Progressive Web App (PWA) readiness for offline field ops.
 
-### Phase 1: High-Velocity Ingestion Pipeline
-* **Channels**: Mobile Forms, WhatsApp, SMS, Webhooks, CSV Bulk, and Paper Surveys (OCR).
-* **OCR Bridge**: Hybrid pipeline using Google Cloud Vision with a Tesseract fallback.
-* **NLP Processor**: Multilingual classification, severity scoring, and entity extraction.
-* **Logic**: Automated Deduplication (Jaccard Similarity) and Review Queue routing for low-confidence data.
+### 2. API Gateway
+* **Routing**: Centralized gateway handling cross-origin requests, authentication stripping, and routing logic across all backend microservices.
+* **Security**: Enforces strict CORS, rate limiting, and standardizes tenant identification via `X-Tenant-ID`.
 
-### Phase 2 & 3: Distributed Hardening & Coordination
-* **Infrastructure**: Hardened Docker-Compose with native service healthchecks and strict dependency ordering.
-* **Event Layer**: Resilient Kafka integration with thread-safe singleton producers and consumer backoff/retry mechanisms.
-* **Persistence**: PostgreSQL connection pooling optimization and idempotent transaction management.
-* **Observability**: High-resolution latency tracking and processing status instrumentation for distributed pipelines.
-* **Resilience**: Dead-Letter Queue (DLQ) support for event processing and automatic recovery from infrastructure downtime.
+### 3. Backend Microservices (FastAPI)
+* **Auth Service**: JWT-based authentication, unified logging, and multi-tenant scoping.
+* **Registry Service**: DPDP-compliant intake workflows, identity cascade matching, and RLS-enforced database mutations.
+* **Ingestion Service**: Resilient multi-modal ingestion (Mobile, Web, CSV) pipelined via Kafka.
+* **Coordination Service**: End-to-end task lifecycles, automated volunteer dispatch state machines, and priority queuing.
+* **Intelligence & Analytics Service**: Needs triaging, urgency scoring, NLP extraction, and system-wide impact metrics.
 
-### Phase 4 & 5: Smart Matching & Impact Analytics
-* **Matching**: Priority-weighted queues with auto-escalation and historical continuity matching.
-* **Feedback Loop**: Smart override learning that adapts to coordinator decisions and volunteer performance.
-* **Analytics**: Multi-tenant impact dashboards with HII (Household Improvement Index) and resolution rate tracking.
-* **Integrity**: Persistent household ledger for crisis frequency and vulnerability drift detection.
+### 4. Infrastructure & Event Layer
+* **PostgreSQL / PostGIS**: Transactional store with multi-tenant row-level security.
+* **Kafka**: Distributed event bus ensuring zero message loss and exact-ordering for `NeedCreated` and `TaskDispatched` events.
+* **Redis**: Rate limiting, state caching, and rapid session access.
+* **Docker Compose**: Production-hardened containerization with dependency healthchecks.
 
 ---
 
@@ -49,16 +50,12 @@ The NEXUS platform provides a unified gateway for ingesting needs and managing h
 
 ### 1. Prerequisites
 * **Python**: 3.10 or higher.
+* **Node.js & npm**: 20.x or higher (for the frontend).
 * **Docker**: For running database and messaging services.
 * **API Keys** (Optional): Google Cloud Vision / Maps for enhanced processing.
 
 ### 2. Services & Docker Management
-Ensure your Docker environment is active. We use the following core services:
-* **PostgreSQL / PostGIS**: Primary transactional store.
-* **Kafka**: Real-time event bus (Need Created, Audit, etc.).
-* **Redis**: Caching and Rate-limiting.
-
-**Standard commands:**
+Ensure your Docker environment is active.
 ```bash
 # Start all infrastructure
 docker-compose up -d
@@ -67,76 +64,69 @@ docker-compose up -d
 docker-compose ps
 ```
 
-### 3. Python Environment
+### 3. Backend Setup
 Install dependencies within a virtual environment:
 ```bash
+cd backend
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 4. Database Initialization
-Run the migration scripts to initialize the multi-tenant schema and apply Phase 1 tables:
+Initialize the database:
 ```bash
-# Apply Phase 0.5 & Phase 1 Schema
+# Apply migrations and schema
 python scripts/apply_migrations.py
 python scripts/apply_phase01.py
 
-# Seed initial test data
+# Seed initial data
 python scripts/seed_phase0.py
+```
+
+Run backend services:
+```bash
+# Using powershell script for convenience:
+./start_backend.ps1
+```
+
+### 4. Frontend Setup
+```bash
+cd frontend
+npm install
+npm run dev
 ```
 
 ---
 
 ## 🧪 Testing & Validation
 
-NEXUS includes a rigorous verification suite to ensure system reliability under adversarial conditions.
+NEXUS integrates an exhaustive, multi-layered verification suite validating system survivability under adversarial conditions.
 
-### Run Unit Tests:
+### 1. Unit & Integration Tests
 ```bash
-pytest tests/test_phase0.py -v
-pytest tests/test_phase01.py -v
+pytest backend/tests/ -v
 ```
 
-### 1. Ingestion Audit (Phase 1)
-Validates multi-channel ingestion, OCR, and deduplication:
+### 2. Comprehensive E2E Flow
+Validates full end-to-end service integration from Registry Intake to Field-Worker Dispatch:
 ```bash
-python scripts/audit_phase01.py
+python scripts/master_system_validation.py
 ```
 
-### 2. Intelligence Audit (Phase 4+5)
-Definitive validation of matching logic, analytics integrity, and learning loops:
-```bash
-## 🧪 Intelligence & Resilience Audit
-The system has achieved a **10.0/10 System Reliability Score** following a strict 12-phase deterministic audit:
-* **Phase 1-5**: Verified feedback loop, temporal accuracy, and override learning.
-* **Phase 6**: Data immutability enforced via granular DB triggers.
-* **Phase 7-10**: Validated concurrency consistency and long-run drift resistance.
-* **Phase 11**: Strict Row-Level Security (RLS) isolation certified.
-* **Phase 12**: Performance contract verified (< 40ms feedback latency).
+### 3. Infrastructure & Resilience Audits
+* **Kafka Resilience Audit**: 10/10 Score for zero-loss, idempotency, and burst recovery.
+* **Intelligence Audit**: Definite validation of feedback loops, DB immutability, and sub-40ms latency contracts.
+* **Survivability Suite**: Validates system degradation and automated recovery mechanisms.
 
 ```bash
-$env:PYTHONPATH=".;backend"
-python scripts/intelligence_audit.py
-```
-
-### 3. Kafka Resilience Audit (Infrastructure Hardening)
-The event-driven core is certified for MVP deployment following a failure-seeking audit:
-* **Idempotency**: 100% duplicate event suppression verified.
-* **Restart Resilience**: Zero message loss during sudden producer/consumer downtime.
-* **Burst Load**: Stable processing of 100+ concurrent ingests without DB pool exhaustion.
-* **Ordering**: Sequential state transitions (Need Status) maintained under load.
-* **Certification**: **10/10 Reliability Score** achieved.
-
-```bash
-$env:PYTHONPATH=".;backend"
 python scripts/kafka_resilience_audit.py
+python scripts/survivability_suite.py
 ```
 
 ## 🛡️ Distributed Production Readiness
-The NEXUS backend is certified for distributed operation:
-* **Kafka Safety**: Memory-bounded idempotency and interruptible consumer loops.
-* **Security**: 100% tenant isolation via FORCED RLS.
+The NEXUS platform is certified for distributed operation:
+* **Event Safety**: Memory-bounded idempotency and interruptible consumer loops.
+* **Security**: 100% tenant isolation via FORCED RLS in PostgreSQL.
 * **Integrity**: Granular immutability triggers on critical audit logs.
 * **Concurrency**: Optimized DB pooling with semaphore-limited burst protection.
 

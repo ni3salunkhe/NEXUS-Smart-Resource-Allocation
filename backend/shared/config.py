@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
+    # ── System Admin ─────────────────────────────────────────
+    SYSTEM_ADMIN_EMAIL: str = Field(default="admin@nexus.org", validation_alias=AliasChoices("SYSTEM_ADMIN_EMAIL"))
+    SYSTEM_ADMIN_PASSWORD: str = Field(default="admin123", validation_alias=AliasChoices("SYSTEM_ADMIN_PASSWORD"))
+
     # ── Encryption ────────────────────────────────────────────
     PII_ENCRYPTION_KEY: str = Field(validation_alias=AliasChoices("PII_ENCRYPTION_KEY"))
 

@@ -7,6 +7,7 @@ from sqlalchemy import text, event
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Optional
 import logging
+from fastapi import Request
 
 from .config import get_settings
 
@@ -70,9 +71,9 @@ async def _set_rls_context(
                 set_config('app.current_role',       :role,      TRUE)
         """),
         {
-            "tenant_id": str(tenant_id) if tenant_id else "",
-            "user_id":   str(user_id)   if user_id   else "",
-            "role":      role or "",
+            "tenant_id": str(tenant_id) if tenant_id else "00000000-0000-0000-0000-000000000000",
+            "user_id":   str(user_id)   if user_id   else "00000000-0000-0000-0000-000000000000",
+            "role":      role or "anonymous",
         }
     )
 
@@ -117,7 +118,7 @@ async def get_replica_session(
 
 
 # ── FastAPI dependency ────────────────────────────────────────
-async def get_db(request) -> AsyncGenerator[AsyncSession, None]:
+async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     """
     FastAPI dependency. Extracts tenant/user from request state
     (populated by auth middleware).

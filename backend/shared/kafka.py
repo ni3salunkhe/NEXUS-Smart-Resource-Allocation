@@ -128,8 +128,8 @@ class NexusProducer:
                         await asyncio.sleep(delay)
                     else:
                         self._starting = False
-                        logger.error(f"Kafka producer failed after {max_retries} attempts. Running in degraded mode.")
-                        raise
+                        logger.error(f"Kafka producer failed after {max_retries} attempts. Running in degraded mode (no real-time events).")
+                        return  # Non-fatal: service starts without Kafka
 
     async def stop(self):
         """Stop producer gracefully. Does NOT reset the singleton."""

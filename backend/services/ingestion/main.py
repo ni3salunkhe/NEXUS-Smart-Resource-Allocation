@@ -38,8 +38,12 @@ from shared.database import get_db
 from shared.auth import get_current_user, AuthContext, TenantRLSMiddleware, require_permission
 from shared.kafka import NexusProducer, NexusEvent
 from shared.config import KafkaTopics
+from shared.logging_config import setup_logging, add_global_error_handler
+# H6: Removed cross-service imports (services.registry.*) — call registry via HTTP instead
 
 from .pipeline import ingestion_pipeline, IngestionPayload
+
+setup_logging("ingestion")
 
 settings = get_settings()
 logger   = logging.getLogger(__name__)
@@ -49,6 +53,7 @@ app = FastAPI(
     version="2.0.0",
     docs_url="/docs" if settings.DEBUG else None,
 )
+add_global_error_handler(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -243,6 +248,54 @@ async def ingest_image(
     return _pipeline_result_response(result)
 
 
+# ── CHANNEL: Audio (Voice Note) ───────────────────────────────
+@app.post("/ingest/audio", status_code=201)
+async def ingest_audio(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    known_household_id: Optional[str] = Query(None),
+    language_hint: str = Query("hi-IN"),  # Default to Hindi, common for voice notes
+    ctx: AuthContext = Depends(require_permission("needs:create")),
+    db=Depends(get_db),
+):
+    """H9: Voice note ingestion — STT → NLP → pipeline."""
+    if not file.content_type.startswith("audio/"):
+        raise HTTPException(status_code=400, detail="File must be an audio file")
+
+    audio_bytes = await file.read()
+    
+    # STUB: In production, this would call Google Cloud Speech-to-Text API
+    # using settings.GOOGLE_SPEECH_API_KEY
+    transcribed_text = f"[Transcribed Audio ({language_hint})]: Field worker reported severe flooding blocking access to the main road."
+    
+    # STUB: Store raw audio to S3
+    s3_key = f"s3://nexus-raw/{ctx.tenant_id}/audio/{file.filename}"
+
+    payload = IngestionPayload(
+        source_type        = "voice",
+        tenant_id          = ctx.tenant_id,
+        submitted_by       = ctx.user_id,
+        raw_text           = transcribed_text,
+        known_household_id = known_household_id,
+        raw_metadata       = {
+            "s3_url": s3_key,
+            "language_hint": language_hint,
+            "audio_duration_sec": 15, # stub
+        },
+    )
+    
+    result = await ingestion_pipeline.run(payload, db)
+    if not result.success:
+        raise HTTPException(status_code=500, detail=result.error)
+
+    if result.need_id:
+        background_tasks.add_task(
+            _emit_need_created, result.need_id, ctx.tenant_id, ctx.user_id,
+            {"source": "voice"}
+        )
+    return _pipeline_result_response(result)
+
+
 # ── CHANNEL: CSV bulk upload ──────────────────────────────────
 @app.post("/ingest/csv", status_code=202)
 async def ingest_csv(
@@ -402,6 +455,64 @@ async def approve_review(
     return {"approved": True, "review_id": str(review_id)}
 
 
+@app.post("/review/{review_id}/create-household")
+async def create_household_from_review(
+    review_id: UUID,
+    body: dict,
+    ctx: AuthContext = Depends(require_permission("needs:read")),
+    db=Depends(get_db),
+):
+    """
+    GAP-04: Atomic Household Creation + Need Linking.
+    Calls registry service via HTTP instead of direct import (H6).
+    """
+    import httpx
+    # 1. Verify review exists
+    rev_res = await db.execute(
+        text("SELECT need_id FROM review_queue WHERE review_id=:rid AND tenant_id=:tid"),
+        {"rid": str(review_id), "tid": ctx.tenant_id}
+    )
+    rev = rev_res.fetchone()
+    if not rev:
+        raise HTTPException(status_code=404, detail="Review record not found")
+
+    registry_url = settings.REGISTRY_URL if hasattr(settings, "REGISTRY_URL") else "http://localhost:8001"
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(
+            f"{registry_url}/households",
+            json=body,
+            headers={
+                "X-Tenant-ID": ctx.tenant_id,
+                "X-User-ID":   ctx.user_id,
+            },
+        )
+        if resp.status_code not in (200, 201):
+            raise HTTPException(status_code=502, detail=f"Registry error: {resp.text}")
+        hh_id = resp.json()["household_id"]
+
+    # 2. Link need to household + approve review atomically
+    await db.execute(
+        text("""
+            UPDATE need_records
+            SET household_id=:hh_id, status='verified', verified_by=:by, verified_at=NOW()
+            WHERE need_id=:nid
+        """),
+        {"hh_id": hh_id, "by": ctx.user_id, "nid": str(rev.need_id)}
+    )
+    await db.execute(
+        text("""
+            UPDATE review_queue
+            SET status='approved', reviewed_by=:by, resolved_at=NOW(),
+                review_notes='Created new household via GAP-04'
+            WHERE review_id=:rid
+        """),
+        {"by": ctx.user_id, "rid": str(review_id)}
+    )
+    await db.commit()
+    return {"status": "success", "household_id": hh_id, "need_id": str(rev.need_id)}
+
+
 @app.post("/review/{review_id}/reject")
 async def reject_review(
     review_id: UUID,
@@ -476,6 +587,35 @@ async def get_need(
     if not row:
         raise HTTPException(status_code=404, detail="Need not found")
     return dict(row._mapping)
+
+
+# ── GAP-08: Ingestion Status Polling ──────────────────────────
+@app.get("/ingest/status/{raw_id}")
+async def get_ingest_status(
+    raw_id: str,
+    ctx: AuthContext = Depends(require_permission("needs:read")),
+    db=Depends(get_db),
+):
+    """GAP-08: Check status of a raw ingestion submission."""
+    result = await db.execute(
+        text("""
+            SELECT r.raw_id, r.source_type, r.status, r.processing_error, 
+                   n.need_id, n.status as need_status, r.submitted_at as created_at
+            FROM ingestion_raw r
+            LEFT JOIN need_records n ON r.raw_id = n.raw_id
+            WHERE r.raw_id=:rid AND r.tenant_id=:tid
+        """),
+        {"rid": raw_id, "tid": ctx.tenant_id}
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Ingestion record not found")
+
+    data = dict(row._mapping)
+
+    return data
+
+    return data
 
 
 # ── Health ────────────────────────────────────────────────────

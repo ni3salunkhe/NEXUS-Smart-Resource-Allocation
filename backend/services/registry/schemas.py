@@ -122,6 +122,7 @@ class HouseholdCreate(BaseModel):
     location:      Optional[LocationInput] = None
     dwelling_type: Optional[DwellingType]  = None
     economic_tier: Optional[EconomicTier]  = None
+    display_name:  Optional[str]           = None
     members:       List[MemberCreate]  = []
 
 
@@ -130,6 +131,7 @@ class HouseholdUpdate(BaseModel):
     location:      Optional[LocationInput] = None
     dwelling_type: Optional[DwellingType]  = None
     economic_tier: Optional[EconomicTier]  = None
+    display_name:  Optional[str]           = None
     landmark_tags: Optional[List[str]]     = None
 
 
@@ -138,6 +140,7 @@ class HouseholdResponse(BaseModel):
     global_household_id:   Optional[UUID]
     tenant_id:             UUID
     ward_id:               Optional[str]
+    display_name:          Optional[str]
     location_confidence:   float
     location_description:  Optional[str]
     landmark_tags:         List[str]
@@ -287,3 +290,22 @@ class SearchRequest(BaseModel):
     radius_m:       int             = 500
     limit:          int             = Field(20, le=100)
     offset:         int             = 0
+
+
+class GlobalSearchResponse(BaseModel):
+    needs:      List[dict]
+    households: List[HouseholdResponse]
+    volunteers: List[dict]
+
+
+class WardStat(BaseModel):
+    ward_id:          str
+    total_households: int
+    active_needs:     int
+    avg_vuln_score:   float
+
+
+class PartnershipPolicy(BaseModel):
+    partner_id: UUID
+    policy:     str   # "auto_propose" | "coordinator_only" | "disabled"
+    shared_fields: List[str] = []

@@ -1,0 +1,6 @@
+{
+  "name": "Remix: NEXUS-final",
+  "description": "Emergency Operations Center for Humanitarian Relief",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": []
+}

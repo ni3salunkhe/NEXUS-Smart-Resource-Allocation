@@ -47,8 +47,8 @@ def _vulnerability_cosine(a: dict, b: dict) -> float:
     keys = list(set(a) | set(b))
     if not keys:
         return 0.0
-    va = [float(a.get(k, False)) for k in keys]
-    vb = [float(b.get(k, False)) for k in keys]
+    va = [float(bool(a.get(k, False))) for k in keys]
+    vb = [float(bool(b.get(k, False))) for k in keys]
     dot = sum(x * y for x, y in zip(va, vb))
     norm_a = math.sqrt(sum(x**2 for x in va))
     norm_b = math.sqrt(sum(x**2 for x in vb))

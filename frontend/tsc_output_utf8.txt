@@ -1,0 +1,77 @@
+﻿src/components/field/HouseholdRegistrationForm.tsx(47,18): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(value: readonly Literal[], params?: string | { error?: string | $ZodErrorMap<$ZodIssueInvalidValue<unknown>>; message?: string; }): ZodLiteral<Literal>', gave the following error.
+    Argument of type 'boolean' is not assignable to parameter of type 'readonly Literal[]'.
+  Overload 2 of 2, '(value: true, params?: string | { error?: string | $ZodErrorMap<$ZodIssueInvalidValue<unknown>>; message?: string; }): ZodLiteral<true>', gave the following error.
+    Object literal may only specify known properties, and 'errorMap' does not exist in type '{ error?: string | $ZodErrorMap<$ZodIssueInvalidValue<unknown>>; message?: string; }'.
+src/components/field/HouseholdRegistrationForm.tsx(66,5): error TS2322: Type 'Resolver<{ location: { latitude: number; longitude: number; description: string; landmarks: string[]; confidence?: number; }; ward_id: string; dwelling_type: "permanent" | "semi-permanent" | "temporary" | "open-space"; economic_tier: "below_poverty" | ... 2 more ... | "medium"; members: { ...; }[]; consent: { ...; }...' is not assignable to type 'Resolver<{ location: { latitude: number; longitude: number; description: string; landmarks: string[]; confidence: number; }; ward_id: string; dwelling_type: "permanent" | "semi-permanent" | "temporary" | "open-space"; economic_tier: "below_poverty" | ... 2 more ... | "medium"; members: { ...; }[]; consent: { ...; };...'.
+  Types of parameters 'options' and 'options' are incompatible.
+    Type 'ResolverOptions<{ location: { latitude: number; longitude: number; description: string; landmarks: string[]; confidence: number; }; ward_id: string; dwelling_type: "permanent" | "semi-permanent" | "temporary" | "open-space"; economic_tier: "below_poverty" | ... 2 more ... | "medium"; members: { ...; }[]; consent: { ...' is not assignable to type 'ResolverOptions<{ location: { latitude: number; longitude: number; description: string; landmarks: string[]; confidence?: number; }; ward_id: string; dwelling_type: "permanent" | "semi-permanent" | "temporary" | "open-space"; economic_tier: "below_poverty" | ... 2 more ... | "medium"; members: { ...; }[]; consent: {...'.
+      Type '{ latitude: number; longitude: number; description: string; landmarks: string[]; confidence?: number; }' is not assignable to type '{ latitude: number; longitude: number; description: string; landmarks: string[]; confidence: number; }'.
+        Property 'confidence' is optional in type '{ latitude: number; longitude: number; description: string; landmarks: string[]; confidence?: number; }' but required in type '{ latitude: number; longitude: number; description: string; landmarks: string[]; confidence: number; }'.
+src/components/field/HouseholdRegistrationForm.tsx(162,36): error TS2345: Argument of type '(data: RegistrationData) => Promise<void>' is not assignable to parameter of type 'SubmitHandler<TFieldValues>'.
+  Types of parameters 'data' and 'data' are incompatible.
+    Type 'TFieldValues' is not assignable to type '{ location: { latitude: number; longitude: number; description: string; landmarks: string[]; confidence: number; }; ward_id: string; dwelling_type: "permanent" | "semi-permanent" | "temporary" | "open-space"; economic_tier: "below_poverty" | ... 2 more ... | "medium"; members: { ...; }[]; consent: { ...; }; }'.
+      Type 'FieldValues' is missing the following properties from type '{ location: { latitude: number; longitude: number; description: string; landmarks: string[]; confidence: number; }; ward_id: string; dwelling_type: "permanent" | "semi-permanent" | "temporary" | "open-space"; economic_tier: "below_poverty" | ... 2 more ... | "medium"; members: { ...; }[]; consent: { ...; }; }': location, ward_id, dwelling_type, economic_tier, and 2 more.
+src/components/layout/Header.tsx(32,25): error TS2339: Property 'org_name' does not exist on type 'AuthState'.
+src/components/layout/Header.tsx(56,11): error TS2339: Property 'name' does not exist on type 'Volunteer'.
+src/components/layout/Header.tsx(57,11): error TS2339: Property 'vol_id' does not exist on type 'Volunteer'.
+src/components/layout/Header.tsx(94,39): error TS2339: Property 'hh_id' does not exist on type 'Household'.
+src/components/layout/Header.tsx(184,37): error TS2339: Property 'hh_id' does not exist on type 'Household'.
+src/components/layout/Header.tsx(192,103): error TS2339: Property 'hh_id' does not exist on type 'Household'.
+src/components/layout/Header.tsx(193,94): error TS2339: Property 'location_desc' does not exist on type 'Household'.
+src/components/layout/Header.tsx(209,38): error TS2339: Property 'vol_id' does not exist on type 'Volunteer'.
+src/components/layout/Header.tsx(221,104): error TS2339: Property 'name' does not exist on type 'Volunteer'.
+src/components/layout/Header.tsx(222,95): error TS2339: Property 'vol_id' does not exist on type 'Volunteer'.
+src/components/needs/NeedDetailDrawer.tsx(44,17): error TS2345: Argument of type 'NeedRecord' is not assignable to parameter of type 'SetStateAction<NeedDetail>'.
+  Type 'NeedRecord' is not assignable to type 'NeedDetail'.
+    Types of property 'vulnerability_flags' are incompatible.
+      Type 'VulnerabilityFlags' is not assignable to type 'Record<string, boolean>'.
+        Index signature for type 'string' is missing in type 'VulnerabilityFlags'.
+src/components/needs/NeedsList.tsx(32,18): error TS2345: Argument of type 'NeedRecord[]' is not assignable to parameter of type 'SetStateAction<NeedRow[]>'.
+  Type 'NeedRecord[]' is not assignable to type 'NeedRow[]'.
+    Type 'NeedRecord' is not assignable to type 'NeedRow'.
+      Types of property 'vulnerability_flags' are incompatible.
+        Type 'VulnerabilityFlags' is not assignable to type 'Record<string, boolean>'.
+          Index signature for type 'string' is missing in type 'VulnerabilityFlags'.
+src/pages/field/VolunteerHomePage.tsx(46,71): error TS2339: Property 'items' does not exist on type 'never'.
+src/pages/FieldReportPage.tsx(6,25): error TS2307: Cannot find module '../contexts/AuthContext' or its corresponding type declarations.
+src/pages/IntakeRegistrationPage.tsx(71,20): error TS2552: Cannot find name 'useNavigate'. Did you mean 'navigate'?
+src/pages/IntakeRegistrationPage.tsx(72,18): error TS2304: Cannot find name 'useParams'.
+src/pages/IntakeRegistrationPage.tsx(375,35): error TS2339: Property 'latitude' does not exist on type '{ lat: number; lng: number; }'.
+src/pages/IntakeRegistrationPage.tsx(375,56): error TS2339: Property 'latitude' does not exist on type 'Household'.
+src/pages/IntakeRegistrationPage.tsx(376,35): error TS2339: Property 'longitude' does not exist on type '{ lat: number; lng: number; }'.
+src/pages/IntakeRegistrationPage.tsx(376,57): error TS2339: Property 'longitude' does not exist on type 'Household'.
+src/pages/IntakeRegistrationPage.tsx(407,18): error TS2345: Argument of type '{ id: string; role: string; age: string; gender: string; vulnerability: { disabled: boolean; chronic_illness: boolean; pregnant: boolean; }; }[]' is not assignable to parameter of type 'SetStateAction<MemberRow[]>'.
+  Type '{ id: string; role: string; age: string; gender: string; vulnerability: { disabled: boolean; chronic_illness: boolean; pregnant: boolean; }; }[]' is not assignable to type 'MemberRow[]'.
+    Type '{ id: string; role: string; age: string; gender: string; vulnerability: { disabled: boolean; chronic_illness: boolean; pregnant: boolean; }; }' is not assignable to type 'MemberRow'.
+      Types of property 'age' are incompatible.
+        Type 'string' is not assignable to type '"" | "infant" | "child" | "youth" | "adult" | "elderly"'.
+src/pages/MapPage.tsx(145,27): error TS2339: Property 'hh_id' does not exist on type 'Household'.
+src/pages/MapPage.tsx(146,33): error TS2339: Property 'lat' does not exist on type 'Household'.
+src/pages/MapPage.tsx(146,41): error TS2339: Property 'lng' does not exist on type 'Household'.
+src/pages/MapPage.tsx(152,31): error TS2339: Property 'hh_id' does not exist on type 'Household'.
+src/pages/MapPage.tsx(156,72): error TS2339: Property 'vuln_score' does not exist on type 'Household'.
+src/pages/MapPage.tsx(159,81): error TS2339: Property 'location_desc' does not exist on type 'Household'.
+src/pages/MapPage.tsx(160,69): error TS2322: Type 'MemberRow[]' is not assignable to type 'ReactNode'.
+  Type 'MemberRow[]' is not assignable to type 'Iterable<ReactNode>'.
+    The types returned by '[Symbol.iterator]().next(...)' are incompatible between these types.
+      Type 'IteratorResult<MemberRow, any>' is not assignable to type 'IteratorResult<ReactNode, any>'.
+        Type 'IteratorYieldResult<MemberRow>' is not assignable to type 'IteratorResult<ReactNode, any>'.
+          Type 'IteratorYieldResult<MemberRow>' is not assignable to type 'IteratorYieldResult<ReactNode>'.
+            Type 'MemberRow' is not assignable to type 'ReactNode'.
+src/pages/MapPage.tsx(165,99): error TS2339: Property 'vuln_score' does not exist on type 'Household'.
+src/pages/MapPage.tsx(166,34): error TS2339: Property 'vuln_score' does not exist on type 'Household'.
+src/pages/MapPage.tsx(170,76): error TS2339: Property 'hh_id' does not exist on type 'Household'.
+src/pages/MapPage.tsx(187,39): error TS2339: Property 'hh_id' does not exist on type 'Household'.
+src/pages/MapPage.tsx(188,31): error TS2339: Property 'lat' does not exist on type 'Household'.
+src/pages/MapPage.tsx(188,39): error TS2339: Property 'lng' does not exist on type 'Household'.
+src/pages/MapPage.tsx(189,36): error TS2339: Property 'vuln_score' does not exist on type 'Household'.
+src/pages/MapPage.tsx(190,49): error TS2339: Property 'vuln_score' does not exist on type 'Household'.
+src/pages/MapPage.tsx(197,92): error TS2339: Property 'vuln_score' does not exist on type 'Household'.
+src/pages/MapPage.tsx(198,30): error TS2339: Property 'vuln_score' does not exist on type 'Household'.
+src/pages/TasksPage.tsx(54,71): error TS2339: Property 'items' does not exist on type 'never'.
+src/stores/volunteer.store.ts(40,13): error TS2322: Type 'import("E:/NEXUS_copy/frontend/src/types/volunteer.types").Volunteer[]' is not assignable to type 'import("E:/NEXUS_copy/frontend/src/stores/volunteer.store").Volunteer[]'.
+  Type 'import("E:/NEXUS_copy/frontend/src/types/volunteer.types").Volunteer' is not assignable to type 'import("E:/NEXUS_copy/frontend/src/stores/volunteer.store").Volunteer'.
+    Types of property 'skills' are incompatible.
+      Type 'VolunteerSkill[]' is not assignable to type 'string[]'.
+        Type 'VolunteerSkill' is not assignable to type 'string'.
